@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>דוחף הארגזים</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;background:#141b14;font-family:'Segoe UI',Arial,sans-serif;color:#eef5e6;touch-action:none;user-select:none}
+#wrap{height:100%;display:flex;flex-direction:column;align-items:center;max-width:460px;margin:0 auto;padding:6px}
+h1{font-size:23px;font-weight:800;background:linear-gradient(90deg,#a7c957,#ffd60a);-webkit-background-clip:text;background-clip:text;color:transparent}
+#hud{display:flex;gap:8px;margin:6px 0;flex-wrap:wrap;justify-content:center}
+.pill{background:#22301f;border-radius:20px;padding:5px 12px;font-size:13px;font-weight:700}
+canvas{display:block;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+#ctrl{display:flex;gap:10px;margin-top:8px}
+.sbtn{background:#2e4028;color:#dcefd0;border:none;padding:9px 16px;font-size:14px;font-weight:700;border-radius:12px;cursor:pointer}
+.ov{position:fixed;inset:0;background:rgba(10,15,8,.9);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:5;text-align:center;padding:20px}
+.ov h2{font-size:30px;background:linear-gradient(90deg,#a7c957,#ffd60a);-webkit-background-clip:text;background-clip:text;color:transparent}
+.ov p{font-size:16px;color:#c9dcb8;max-width:330px;line-height:1.5}
+.btn{background:linear-gradient(135deg,#a7c957,#6a994e);color:#10180c;border:none;padding:14px 38px;font-size:19px;font-weight:800;border-radius:40px;cursor:pointer;box-shadow:0 6px 22px rgba(167,201,87,.35)}
+.hidden{display:none}
+#hint{font-size:12px;color:#7a9a6a;margin-top:6px}
+</style>
+</head>
+<body>
+<div id="wrap">
+<h1>דוחף הארגזים</h1>
+<div id="hud">
+  <div class="pill" id="level">שלב 1</div>
+  <div class="pill" id="moves">מהלכים: 0</div>
+  <div class="pill" id="done">הושלמו: 0</div>
+</div>
+<canvas id="c"></canvas>
+<div id="ctrl">
+  <button class="sbtn" id="undoBtn">ביטול</button>
+  <button class="sbtn" id="resetBtn">איפוס שלב</button>
+</div>
+<div id="hint">החליקו באצבע או בחצי המקלדת כדי לזוז</div>
+</div>
+<div class="ov" id="startOv">
+  <h2>דוחף הארגזים</h2>
+  <p>דחפו את כל הארגזים על עיגולי המטרה. אפשר לדחוף רק ארגז אחד בכל פעם, ואי אפשר למשוך - תכננו את המהלכים!</p>
+  <button class="btn" id="startBtn">שחקו</button>
+</div>
+<div class="ov hidden" id="endOv">
+  <h2 id="endTitle">שלב הושלם!</h2>
+  <p id="endText"></p>
+  <button class="btn" id="nextBtn">לשלב הבא</button>
+</div>
+<div class="ov hidden" id="allOv">
+  <h2>כל השלבים הושלמו!</h2>
+  <p id="allText"></p>
+  <button class="btn" id="allBtn">מההתחלה</button>
+</div>
+<script>
+(function(){
+'use strict';
+var cv=document.getElementById('c'),x=cv.getContext('2d');x.direction='ltr';
+var LEVELS=[
+["########","#      #","# .$@  #","#  $   #","#  .   #","#      #","########"],
+["#########","#   #   #","# $ # . #","#   @   #","# . $   #","#   #   #","#########"],
+["########","#  #   #","# .$@$.#","#  #   #","#      #","########"],
+["#########","#   .   #","#  $$$  #","# . @ . #","#   #   #","#########"],
+["#########","#  #    #","# .$ .  #","# $@$#  #","#  .    #","#  #    #","#########"],
+["#########","#   #   #","# $.$ . #","# #@#   #","# .$.   #","#   #   #","#########"]
+];
+var W=Math.min(window.innerWidth-10,440);
+var lvl=0,map=[],pr=0,pc=0,targets=[],moves=0,history=[],playing=false,done=0;
+var solved=JSON.parse(localStorage.getItem('soko_solved')||'[]');
+function loadLevel(i){
+  var rows=LEVELS[i];
+  var R=rows.length,C=rows[0].length;
+  var cell=Math.floor(Math.min(W/C,(window.innerHeight*0.62)/R));
+  cv.width=cell*C;cv.height=cell*R;
+  map=[];targets=[];
+  for(var r=0;r<R;r++){map.push([]);for(var c=0;c<C;c++){
+    var ch=rows[r][c]||' ';
+    var cellObj={wall:ch==='#',box:ch==='$'||ch==='*'};
+    if(ch==='.'||ch==='*'||ch==='+')targets.push([r,c]);
+    if(ch==='@'||ch==='+'){pr=r;pc=c;}
+    map[r].push(cellObj);
+  }}
+  moves=0;history=[];
+  document.getElementById('level').textContent='שלב '+(i+1);
+  document.getElementById('moves').textContent='מהלכים: 0';
+}
+function isTarget(r,c){return targets.some(function(t){return t[0]===r&&t[1]===c;});}
+function tryMove(dr,dc){
+  if(!playing)return;
+  var nr=pr+dr,nc=pc+dc;
+  if(nr<0||nr>=map.length||nc<0||nc>=map[0].length||map[nr][nc].wall)return;
+  var snapshot=JSON.stringify({map:map,pr:pr,pc:pc,moves:moves});
+  if(map[nr][nc].box){
+    var br=nr+dr,bc=nc+dc;
+    if(br<0||br>=map.length||bc<0||bc>=map[0].length||map[br][bc].wall||map[br][bc].box)return;
+    map[br][bc].box=true;map[nr][nc].box=false;
+  }
+  history.push(snapshot);
+  pr=nr;pc=nc;moves++;
+  document.getElementById('moves').textContent='מהלכים: '+moves;
+  if(targets.every(function(t){return map[t[0]][t[1]].box;})){levelDone();}
+}
+function undo(){
+  if(!history.length)return;
+  var s=JSON.parse(history.pop());
+  map=s.map;pr=s.pr;pc=s.pc;moves=s.moves;
+  document.getElementById('moves').textContent='מהלכים: '+moves;
+}
+function levelDone(){
+  playing=false;done++;
+  if(!solved.includes(lvl)){solved.push(lvl);localStorage.setItem('soko_solved',JSON.stringify(solved));}
+  document.getElementById('done').textContent='הושלמו: '+solved.length;
+  document.getElementById('endText').textContent='שלב '+(lvl+1)+' הושלם ב-'+moves+' מהלכים.';
+  if(lvl+1>=LEVELS.length){
+    document.getElementById('allText').textContent='סיימתם את כל '+LEVELS.length+' השלבים!';
+    setTimeout(function(){document.getElementById('allOv').classList.remove('hidden');},700);
+  }else{
+    setTimeout(function(){document.getElementById('endOv').classList.remove('hidden');},700);
+  }
+}
+function draw(t){
+  var C=map[0].length,cell=cv.width/C;
+  x.fillStyle='#1b2618';x.fillRect(0,0,cv.width,cv.height);
+  for(var r=0;r<map.length;r++)for(var c=0;c<C;c++){
+    var x0=c*cell,y0=r*cell;
+    if(map[r][c].wall){
+      var grd=x.createLinearGradient(x0,y0,x0,y0+cell);
+      grd.addColorStop(0,'#4a5d43');grd.addColorStop(1,'#36452f');
+      x.fillStyle=grd;x.fillRect(x0,y0,cell,cell);
+      x.fillStyle='rgba(255,255,255,0.07)';x.fillRect(x0,y0,cell,cell*0.18);
+    }else{
+      x.fillStyle=((r+c)%2)?'#23301e':'#26351f';
+      x.fillRect(x0,y0,cell,cell);
+    }
+  }
+  targets.forEach(function(t2){
+    var cx=t2[1]*cell+cell/2,cy=t2[0]*cell+cell/2;
+    x.strokeStyle='#ffd60a';x.lineWidth=2.5;
+    x.beginPath();x.arc(cx,cy,cell*0.26,0,7);x.stroke();
+    x.fillStyle='rgba(255,214,10,0.15)';
+    x.beginPath();x.arc(cx,cy,cell*0.26,0,7);x.fill();
+  });
+  for(var r2=0;r2<map.length;r2++)for(var c2=0;c2<C;c2++){
+    if(map[r2][c2].box){
+      var bx=c2*cell,by=r2*cell,onT=isTarget(r2,c2);
+      var bg=x.createLinearGradient(bx,by,bx,by+cell);
+      if(onT){bg.addColorStop(0,'#ffd60a');bg.addColorStop(1,'#c9a105');}
+      else{bg.addColorStop(0,'#b0713a');bg.addColorStop(1,'#7d4c21');}
+      x.fillStyle=bg;
+      x.beginPath();
+      if(x.roundRect)x.roundRect(bx+cell*0.1,by+cell*0.1,cell*0.8,cell*0.8,cell*0.12);else x.rect(bx+cell*0.1,by+cell*0.1,cell*0.8,cell*0.8);
+      x.fill();
+      x.strokeStyle='rgba(0,0,0,0.3)';x.lineWidth=2;
+      x.beginPath();x.moveTo(bx+cell*0.1,by+cell*0.5);x.lineTo(bx+cell*0.9,by+cell*0.5);x.stroke();
+      if(onT){x.fillStyle='#7a5c00';x.font='bold '+Math.floor(cell*0.4)+'px Arial';x.textAlign='center';x.fillText('✓',bx+cell/2,by+cell*0.68);}
+    }
+  }
+  var px=pc*cell+cell/2,py=pr*cell+cell/2+Math.sin(t*3)*cell*0.02;
+  x.fillStyle='rgba(0,0,0,0.3)';
+  x.beginPath();x.ellipse(px,pr*cell+cell*0.82,cell*0.3,cell*0.12,0,0,7);x.fill();
+  var pg=x.createLinearGradient(px,py-cell*0.4,px,py+cell*0.4);
+  pg.addColorStop(0,'#7bd88a');pg.addColorStop(1,'#3d9e52');
+  x.fillStyle=pg;
+  x.beginPath();x.arc(px,py-cell*0.1,cell*0.3,0,7);x.fill();
+  x.fillStyle='#eafbe7';
+  x.beginPath();x.arc(px,py-cell*0.32,cell*0.16,0,7);x.fill();
+  x.fillStyle='#1b2618';
+  x.beginPath();x.arc(px-cell*0.05,py-cell*0.34,cell*0.028,0,7);x.fill();
+  x.beginPath();x.arc(px+cell*0.05,py-cell*0.34,cell*0.028,0,7);x.fill();
+}
+
+var sx=0,sy=0;
+cv.addEventListener('touchstart',function(e){e.preventDefault();var t=e.changedTouches[0];sx=t.clientX;sy=t.clientY;},{passive:false});
+cv.addEventListener('touchend',function(e){
+  e.preventDefault();
+  var t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;
+  if(Math.abs(dx)<18&&Math.abs(dy)<18)return;
+  if(Math.abs(dx)>Math.abs(dy))tryMove(0,dx>0?1:-1);
+  else tryMove(dy>0?1:-1,0);
+},{passive:false});
+document.addEventListener('keydown',function(e){
+  var k=e.key;
+  if(k==='ArrowUp')tryMove(-1,0);else if(k==='ArrowDown')tryMove(1,0);
+  else if(k==='ArrowLeft')tryMove(0,-1);else if(k==='ArrowRight')tryMove(0,1);
+});
+document.getElementById('undoBtn').addEventListener('click',undo);
+document.getElementById('resetBtn').addEventListener('click',function(){loadLevel(lvl);});
+document.getElementById('startBtn').addEventListener('click',function(){document.getElementById('startOv').classList.add('hidden');playing=true;});
+document.getElementById('nextBtn').addEventListener('click',function(){document.getElementById('endOv').classList.add('hidden');lvl++;loadLevel(lvl);playing=true;});
+document.getElementById('allBtn').addEventListener('click',function(){document.getElementById('allOv').classList.add('hidden');lvl=0;loadLevel(0);playing=true;});
+document.getElementById('done').textContent='הושלמו: '+solved.length;
+loadLevel(0);
+var T0=Date.now();
+(function loop(){draw((Date.now()-T0)/1000);requestAnimationFrame(loop);})();
+})();
+</script>
+</body>
+</html>
